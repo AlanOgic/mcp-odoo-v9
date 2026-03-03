@@ -355,48 +355,24 @@ class OdooClient:
 
 def load_config():
     """
-    Load Odoo configuration from .env file, environment variables, or config file
+    Load Odoo configuration from environment variables, .env file, or config file
 
     Priority order:
-    1. Search for .env file in common locations and load it
-    2. Check environment variables (may have been set by .env)
-    3. Fall back to JSON config files
+    1. Environment variables already set (e.g. by Claude Desktop, Docker, systemd)
+    2. .env file from common locations (does NOT override existing env vars)
+    3. JSON config files
 
     Environment Variables:
-        ODOO_CONFIG_DIR: Custom directory to search for .env file (highest priority)
+        ODOO_CONFIG_DIR: Custom directory to search for .env file
 
     Returns:
         dict: Configuration dictionary with url, db, username, password
     """
-    # Define .env file paths to check (in priority order)
-    env_paths = []
+    required_vars = ["ODOO_URL", "ODOO_DB", "ODOO_USERNAME", "ODOO_PASSWORD"]
 
-    # Check for custom config directory (highest priority)
-    custom_config_dir = os.environ.get("ODOO_CONFIG_DIR")
-    if custom_config_dir:
-        custom_env_path = os.path.join(os.path.expanduser(custom_config_dir), ".env")
-        env_paths.append(custom_env_path)
-
-    # Standard paths
-    env_paths.extend([
-        ".env",  # Current directory
-        os.path.expanduser("~/.config/odoo/.env"),  # User config directory
-        os.path.expanduser("~/.env"),  # User home directory
-    ])
-
-    # Try to load .env file from common locations
-    for env_path in env_paths:
-        expanded_path = os.path.expanduser(env_path)
-        if os.path.exists(expanded_path):
-            print(f"Loading configuration from: {expanded_path}", file=sys.stderr)
-            load_dotenv(dotenv_path=expanded_path, override=True)
-            break
-
-    # Check environment variables (may have been set by .env file)
-    if all(
-        var in os.environ
-        for var in ["ODOO_URL", "ODOO_DB", "ODOO_USERNAME", "ODOO_PASSWORD"]
-    ):
+    # 1. If all required env vars are already set, use them directly
+    if all(var in os.environ for var in required_vars):
+        print("Using environment variables (already set)", file=sys.stderr)
         return {
             "url": os.environ["ODOO_URL"],
             "db": os.environ["ODOO_DB"],
@@ -404,7 +380,37 @@ def load_config():
             "password": os.environ["ODOO_PASSWORD"],
         }
 
-    # Fall back to JSON config files
+    # 2. Try to load .env file (does NOT override existing env vars)
+    env_paths = []
+
+    custom_config_dir = os.environ.get("ODOO_CONFIG_DIR")
+    if custom_config_dir:
+        custom_env_path = os.path.join(os.path.expanduser(custom_config_dir), ".env")
+        env_paths.append(custom_env_path)
+
+    env_paths.extend([
+        ".env",
+        os.path.expanduser("~/.config/odoo/.env"),
+        os.path.expanduser("~/.env"),
+    ])
+
+    for env_path in env_paths:
+        expanded_path = os.path.expanduser(env_path)
+        if os.path.exists(expanded_path):
+            print(f"Loading configuration from: {expanded_path}", file=sys.stderr)
+            load_dotenv(dotenv_path=expanded_path, override=False)
+            break
+
+    # Check env vars again (may have been populated by .env file)
+    if all(var in os.environ for var in required_vars):
+        return {
+            "url": os.environ["ODOO_URL"],
+            "db": os.environ["ODOO_DB"],
+            "username": os.environ["ODOO_USERNAME"],
+            "password": os.environ["ODOO_PASSWORD"],
+        }
+
+    # 3. Fall back to JSON config files
     config_paths = [
         "./odoo_config.json",
         os.path.expanduser("~/.config/odoo/config.json"),
