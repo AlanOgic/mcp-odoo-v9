@@ -285,8 +285,8 @@ batch_execute(
 
 - **`odoo://model/{model}/schema`** - Field definitions, relationships, required fields
 - **`odoo://model/{model}/access`** - Your permissions (read/write/create/delete)
-- **`odoo://methods/{model}`** - Available methods for a model
-- **`odoo://workflows`** - Business workflows (Sales, CRM, Inventory, etc.)
+- **`odoo://methods/{model}`** - ORM methods + dynamically discovered business methods & state info
+- **`odoo://workflows`** - Hardcoded workflow guides + dynamically discovered formal workflows & state machines
 - **`odoo://server/info`** - Odoo version and installed modules
 
 ### The Cookbook
@@ -394,6 +394,7 @@ batch_execute(
 ### AI Integration
 * **Claude Desktop Ready**: Seamless integration with Claude Code
 * **Two Universal Tools**: Access the entire Odoo API with `execute_method` and `batch_execute`
+* **Dynamic Discovery**: Business methods, formal workflows, and state machines introspected from the live Odoo instance
 * **Smart Limits**: Automatic protection against oversized queries (configurable)
 * **MCP 2025 Compliant**: Latest Model Context Protocol specification
 

@@ -4,8 +4,8 @@ Odoo MCP Server Launcher
 Interactive menu to choose transport mode
 """
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
 
 

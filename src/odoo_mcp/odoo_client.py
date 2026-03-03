@@ -4,9 +4,10 @@ Odoo v9 JSON-RPC client for MCP server integration
 
 import json
 import os
-import sys
 import re
+import sys
 import urllib.parse
+import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -95,12 +96,8 @@ class OdooClient:
         payload = {
             "jsonrpc": "1.0",
             "method": "call",
-            "params": {
-                "service": service,
-                "method": method,
-                "args": list(args)
-            },
-            "id": self._request_id
+            "params": {"service": service, "method": method, "args": list(args)},
+            "id": self._request_id,
         }
 
         try:
@@ -108,7 +105,7 @@ class OdooClient:
                 self.jsonrpc_url,
                 json=payload,
                 timeout=self.timeout,
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
             response.raise_for_status()
 
@@ -162,9 +159,15 @@ class OdooClient:
     def _execute(self, model, method, *args, **kwargs):
         """Execute a method on an Odoo v9 model via JSON-RPC"""
         return self._jsonrpc_call(
-            "object", "execute_kw",
-            self.db, self.uid, self.password,
-            model, method, args, kwargs
+            "object",
+            "execute_kw",
+            self.db,
+            self.uid,
+            self.password,
+            model,
+            method,
+            args,
+            kwargs,
         )
 
     def execute_method(self, model, method, *args, **kwargs):
@@ -283,6 +286,304 @@ class OdooClient:
             print(f"Error retrieving fields: {str(e)}", file=sys.stderr)
             return {"error": str(e)}
 
+    def discover_model_buttons(self, model_name: str) -> List[Dict[str, str]]:
+        """
+        Discover callable business methods by parsing form view button elements.
+
+        Queries ir.ui.view for form views of the model, then extracts
+        <button type="object" name="method_name"/> elements from the XML arch.
+
+        Args:
+            model_name: Name of the model (e.g., 'sale.order')
+
+        Returns:
+            List of dicts with 'name' and 'string' keys, e.g.:
+            [{"name": "action_confirm", "string": "Confirm"}]
+        """
+        try:
+            views = self._execute(
+                "ir.ui.view",
+                "search_read",
+                [("model", "=", model_name), ("type", "=", "form")],
+                {"fields": ["arch"], "limit": 50},
+            )
+
+            if not views:
+                return []
+
+            seen = set()
+            buttons = []
+
+            for view in views:
+                arch = view.get("arch", "")
+                if not arch:
+                    continue
+
+                try:
+                    root = ET.fromstring(arch)
+                except ET.ParseError:
+                    continue
+
+                for btn in root.iter("button"):
+                    btn_type = btn.get("type", "")
+                    btn_name = btn.get("name", "")
+                    btn_string = btn.get("string", "")
+
+                    # Only object-type buttons are Python method calls
+                    if btn_type != "object" or not btn_name:
+                        continue
+
+                    # Skip server action references (contain % or are numeric)
+                    if "%" in btn_name or btn_name.isdigit():
+                        continue
+
+                    if btn_name not in seen:
+                        seen.add(btn_name)
+                        buttons.append({"name": btn_name, "string": btn_string})
+
+            return buttons
+        except Exception as e:
+            print(f"discover_model_buttons({model_name}) failed: {e}", file=sys.stderr)
+            return []
+
+    def get_state_field_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get state/stage field information for a model.
+
+        Checks for 'state' (selection) and 'stage_id' (many2one) fields
+        using the existing fields_get() call.
+
+        Args:
+            model_name: Name of the model (e.g., 'sale.order')
+
+        Returns:
+            Dict with state/stage info, or None if neither field exists.
+            Example: {"state": {"type": "selection", "string": "Status",
+                      "values": [["draft","Draft"], ...]}}
+        """
+        try:
+            fields = self.get_model_fields(model_name)
+            if "error" in fields:
+                return None
+
+            result = {}
+
+            if "state" in fields:
+                state_field = fields["state"]
+                if state_field.get("type") == "selection":
+                    result["state"] = {
+                        "type": "selection",
+                        "string": state_field.get("string", "Status"),
+                        "values": state_field.get("selection", []),
+                    }
+
+            if "stage_id" in fields:
+                stage_field = fields["stage_id"]
+                if stage_field.get("type") == "many2one":
+                    result["stage_id"] = {
+                        "type": "many2one",
+                        "string": stage_field.get("string", "Stage"),
+                        "relation": stage_field.get("relation", ""),
+                    }
+
+            return result if result else None
+        except Exception as e:
+            print(f"get_state_field_info({model_name}) failed: {e}", file=sys.stderr)
+            return None
+
+    def discover_workflows(self) -> List[Dict[str, Any]]:
+        """
+        Discover formal Odoo v9 workflows from the workflow engine.
+
+        Queries workflow, workflow.activity, workflow.transition ORM models
+        to build a readable representation of formal workflows.
+
+        Returns:
+            List of workflow dicts with activities and transitions.
+        """
+        try:
+            # Check if workflow model is accessible
+            wf_ids = self._execute("workflow", "search", [], {"limit": 100})
+            if not wf_ids:
+                return []
+
+            workflows_data = self._execute(
+                "workflow", "read", wf_ids, ["name", "osv", "on_create"]
+            )
+
+            results = []
+            for wf in workflows_data:
+                wf_id = wf["id"]
+                wf_entry = {
+                    "name": wf.get("name", ""),
+                    "model": wf.get("osv", ""),
+                    "on_create": wf.get("on_create", False),
+                    "activities": [],
+                    "transitions": [],
+                }
+
+                # Get activities for this workflow
+                try:
+                    act_ids = self._execute(
+                        "workflow.activity",
+                        "search",
+                        [("wkf_id", "=", wf_id)],
+                    )
+                    if act_ids:
+                        activities = self._execute(
+                            "workflow.activity",
+                            "read",
+                            act_ids,
+                            [
+                                "name",
+                                "kind",
+                                "flow_start",
+                                "flow_stop",
+                                "action",
+                                "signal_send",
+                            ],
+                        )
+                        wf_entry["activities"] = [
+                            {
+                                "id": a["id"],
+                                "name": a.get("name", ""),
+                                "kind": a.get("kind", ""),
+                                "flow_start": a.get("flow_start", False),
+                                "flow_stop": a.get("flow_stop", False),
+                                "action": a.get("action", ""),
+                            }
+                            for a in activities
+                        ]
+                except Exception:
+                    pass
+
+                # Get transitions for this workflow
+                try:
+                    trans_ids = self._execute(
+                        "workflow.transition",
+                        "search",
+                        [
+                            (
+                                "act_from",
+                                "in",
+                                [a["id"] for a in wf_entry["activities"]],
+                            )
+                        ],
+                    )
+                    if trans_ids:
+                        transitions = self._execute(
+                            "workflow.transition",
+                            "read",
+                            trans_ids,
+                            ["act_from", "act_to", "signal", "condition"],
+                        )
+                        wf_entry["transitions"] = [
+                            {
+                                "from": (
+                                    t.get("act_from", [False, ""])[1]
+                                    if isinstance(t.get("act_from"), (list, tuple))
+                                    else t.get("act_from", "")
+                                ),
+                                "to": (
+                                    t.get("act_to", [False, ""])[1]
+                                    if isinstance(t.get("act_to"), (list, tuple))
+                                    else t.get("act_to", "")
+                                ),
+                                "signal": t.get("signal", ""),
+                                "condition": t.get("condition", ""),
+                            }
+                            for t in transitions
+                        ]
+                except Exception:
+                    pass
+
+                results.append(wf_entry)
+
+            return results
+        except Exception as e:
+            print(f"discover_workflows() failed: {e}", file=sys.stderr)
+            return []
+
+    def discover_state_machines(self) -> List[Dict[str, Any]]:
+        """
+        Find models that have a state selection field (informal state machines).
+
+        Queries ir.model.fields for fields named 'state' with type 'selection',
+        then fetches the selection values via fields_get on each model.
+        Excludes technical/internal models.
+
+        Returns:
+            List of dicts with model name, display name, and state field values.
+        """
+        try:
+            # Find models with a 'state' selection field
+            state_fields = self._execute(
+                "ir.model.fields",
+                "search_read",
+                [("name", "=", "state"), ("ttype", "=", "selection")],
+                {"fields": ["model_id"], "limit": 200},
+            )
+
+            if not state_fields:
+                return []
+
+            # Get model IDs
+            model_ids = list(
+                {sf["model_id"][0] for sf in state_fields if sf.get("model_id")}
+            )
+
+            if not model_ids:
+                return []
+
+            # Read model names
+            models = self._execute("ir.model", "read", model_ids, ["model", "name"])
+
+            # Filter out technical models
+            technical_prefixes = (
+                "ir.",
+                "base.",
+                "bus.",
+                "_unknown",
+                "base_import.",
+                "web_",
+            )
+            filtered = [
+                m for m in models if not m["model"].startswith(technical_prefixes)
+            ]
+
+            # Cap to prevent excessive queries
+            filtered = filtered[:30]
+
+            results = []
+            for model_rec in filtered:
+                model_name = model_rec["model"]
+                try:
+                    fields = self._execute(
+                        model_name,
+                        "fields_get",
+                        ["state"],
+                        {"attributes": ["type", "string", "selection"]},
+                    )
+                    state_info = fields.get("state", {})
+                    if state_info.get("type") == "selection":
+                        results.append(
+                            {
+                                "model": model_name,
+                                "display_name": model_rec.get("name", ""),
+                                "state_field": {
+                                    "string": state_info.get("string", "Status"),
+                                    "values": state_info.get("selection", []),
+                                },
+                            }
+                        )
+                except Exception:
+                    continue
+
+            return results
+        except Exception as e:
+            print(f"discover_state_machines() failed: {e}", file=sys.stderr)
+            return []
+
     def search_read(
         self, model_name, domain, fields=None, offset=None, limit=None, order=None
     ):
@@ -388,11 +689,13 @@ def load_config():
         custom_env_path = os.path.join(os.path.expanduser(custom_config_dir), ".env")
         env_paths.append(custom_env_path)
 
-    env_paths.extend([
-        ".env",
-        os.path.expanduser("~/.config/odoo/.env"),
-        os.path.expanduser("~/.env"),
-    ])
+    env_paths.extend(
+        [
+            ".env",
+            os.path.expanduser("~/.config/odoo/.env"),
+            os.path.expanduser("~/.env"),
+        ]
+    )
 
     for env_path in env_paths:
         expanded_path = os.path.expanduser(env_path)

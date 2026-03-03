@@ -4,10 +4,10 @@ Standalone script to run the Odoo v9 MCP server with enhanced logging
 Compatible with FastMCP 3.x
 """
 
-import sys
-import os
-import logging
 import datetime
+import logging
+import os
+import sys
 
 from odoo_mcp.server import mcp  # FastMCP instance from our code
 

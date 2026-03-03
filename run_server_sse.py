@@ -72,9 +72,7 @@ class TeeLogger:
 
 sys.stderr = TeeLogger(log_file)
 
-print(
-    f"[{datetime.now().isoformat()}] Starting Odoo v9 MCP Server (SSE Transport)"
-)
+print(f"[{datetime.now().isoformat()}] Starting Odoo v9 MCP Server (SSE Transport)")
 print(f"Logging to: {log_file}")
 
 from odoo_mcp.server import mcp
