@@ -12,6 +12,9 @@ An MCP (Model Context Protocol) server for **Odoo v9** ERP systems, enabling AI 
 
 **1. Set your credentials** (once):
 
+<details>
+<summary><b>macOS / Linux</b></summary>
+
 ```bash
 mkdir -p ~/.config/odoo
 cat > ~/.config/odoo/.env << 'EOF'
@@ -21,6 +24,25 @@ ODOO_USERNAME=your-username
 ODOO_PASSWORD=your-password
 EOF
 ```
+
+</details>
+
+<details>
+<summary><b>Windows (PowerShell)</b></summary>
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.config\odoo"
+@"
+ODOO_URL=https://your-odoo-instance.com
+ODOO_DB=your-database
+ODOO_USERNAME=your-username
+ODOO_PASSWORD=your-password
+"@ | Set-Content "$env:USERPROFILE\.config\odoo\.env" -Encoding UTF8
+```
+
+Or simply create the file `C:\Users\YourName\.config\odoo\.env` with any text editor.
+
+</details>
 
 **2. Add to your AI client** and start talking to your Odoo:
 
@@ -160,10 +182,20 @@ No installation, no venv, no dependencies to manage. Just run.
 
 ### pip
 
+**macOS / Linux:**
 ```bash
 git clone https://github.com/AlanOgic/mcp-odoo-v9.git
 cd mcp-odoo-v9
 python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+**Windows (PowerShell):**
+```powershell
+git clone https://github.com/AlanOgic/mcp-odoo-v9.git
+cd mcp-odoo-v9
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 pip install -e .
 ```
 
@@ -189,10 +221,12 @@ docker run -p 8008:8008 --env-file .env alanogic/mcp-odoo-v9:http
 
 Create a `.env` file in any of these locations (checked in order):
 
-1. `$ODOO_CONFIG_DIR/.env` — custom directory (set via env var)
-2. `.env` — current working directory
-3. `~/.config/odoo/.env` — user config (recommended for uvx)
-4. `~/.env` — home directory
+| # | macOS / Linux | Windows |
+|---|---------------|---------|
+| 1 | `$ODOO_CONFIG_DIR/.env` | `%ODOO_CONFIG_DIR%\.env` |
+| 2 | `.env` (current directory) | `.env` (current directory) |
+| 3 | `~/.config/odoo/.env` | `C:\Users\YourName\.config\odoo\.env` |
+| 4 | `~/.env` | `C:\Users\YourName\.env` |
 
 **Required variables:**
 
@@ -292,6 +326,8 @@ python run_server_sse.py
 python run_server_http.py
 ```
 
+> **Windows note:** Use `python` instead of `python3`. All commands work the same in PowerShell or CMD.
+
 ---
 
 ## Smart Limits
@@ -348,6 +384,7 @@ Common search operators for filtering:
 ### Production Ready
 * Odoo 9.0 via JSON-RPC
 * Python 3.10 - 3.13
+* **Cross-platform** — macOS, Linux, Windows 11
 * Environment variables or config files
 * HTTP proxy support, configurable SSL
 * Enhanced logging to `./logs/`
