@@ -6,7 +6,7 @@ Streamable HTTP transport enables bidirectional streaming over HTTP/2,
 suitable for API clients and programmatic integrations.
 
 Environment Variables:
-    MCP_HOST: Host to bind to (default: 0.0.0.0)
+    MCP_HOST: Host to bind to (default: 127.0.0.1)
     MCP_PORT: Port to listen on (default: 8008)
     MCP_HTTP_PATH: HTTP endpoint path (default: /mcp)
     ODOO_URL: Odoo server URL
@@ -29,62 +29,27 @@ Usage:
 
 import os
 import sys
-from datetime import datetime
 
-# Setup logging to both stderr and file
-log_dir = "logs"
-os.makedirs(log_dir, exist_ok=True)
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(log_dir, f"mcp_server_http_{timestamp}.log")
+from odoo_mcp.logging_utils import setup_tee_logging
 
+setup_tee_logging("http")
 
-class TeeLogger:
-    """Write to both stderr and a log file"""
-
-    def __init__(self, file_path):
-        self.terminal = sys.stderr
-        self.log = open(file_path, "a")
-
-    def __del__(self):
-        """Ensure file is closed when TeeLogger is destroyed"""
-        if hasattr(self, "log") and self.log:
-            try:
-                self.log.close()
-            except:
-                pass  # Ignore errors during cleanup
-
-    def write(self, message):
-        self.terminal.write(message)
-        if self.log and not self.log.closed:
-            self.log.write(message)
-            self.log.flush()
-
-    def flush(self):
-        self.terminal.flush()
-        if self.log and not self.log.closed:
-            self.log.flush()
-
-    def close(self):
-        """Explicitly close the log file"""
-        if self.log and not self.log.closed:
-            self.log.close()
-
-
-sys.stderr = TeeLogger(log_file)
-
-print(
-    f"[{datetime.now().isoformat()}] Starting Odoo v9 MCP Server (Streamable HTTP Transport)"
-)
-print(f"Logging to: {log_file}")
-
-from odoo_mcp.server import mcp
+from odoo_mcp.server import mcp  # noqa: E402 — logging must be set up before this import
 
 # Get HTTP configuration from environment
 host = os.environ.get("MCP_HOST", "127.0.0.1")
 port = int(os.environ.get("MCP_PORT", "8008"))
 path = os.environ.get("MCP_HTTP_PATH", "/mcp")
 
-print(f"Streamable HTTP Configuration:")
+if host == "0.0.0.0":
+    print(
+        "WARNING: MCP server binding to 0.0.0.0 (all interfaces). "
+        "Ensure a reverse proxy with authentication is in place. "
+        "Set MCP_HOST=127.0.0.1 for local-only access.",
+        file=sys.stderr,
+    )
+
+print("Streamable HTTP Configuration:")
 print(f"  Host: {host}")
 print(f"  Port: {port}")
 print(f"  HTTP Path: {path}")

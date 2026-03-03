@@ -2,7 +2,6 @@
 Command line entry point for the Odoo v9 MCP Server
 """
 
-import asyncio
 import os
 import sys
 import traceback

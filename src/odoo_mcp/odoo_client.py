@@ -4,6 +4,7 @@ Odoo v9 JSON-RPC client for MCP server integration
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import re
@@ -11,11 +12,44 @@ import sys
 import threading
 import time
 import urllib.parse
-import xml.etree.ElementTree as ET
 from typing import Any
 
+import defusedxml.ElementTree as ET
 import requests
 from dotenv import load_dotenv
+
+
+# ----- TTL Cache -----
+
+_DISCOVERY_CACHE_TTL = 300  # 5 minutes
+
+
+class _TTLCache:
+    """Simple thread-safe TTL cache for discovery results."""
+
+    def __init__(self, ttl: float = _DISCOVERY_CACHE_TTL) -> None:
+        self._ttl = ttl
+        self._store: dict[str, tuple[float, Any]] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key: str) -> Any | None:
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            ts, value = entry
+            if time.monotonic() - ts > self._ttl:
+                del self._store[key]
+                return None
+            return value
+
+    def set(self, key: str, value: Any) -> None:
+        with self._lock:
+            self._store[key] = (time.monotonic(), value)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._store.clear()
 
 
 class OdooClient:
@@ -90,13 +124,16 @@ class OdooClient:
         # JSON-RPC endpoint
         self.jsonrpc_url = f"{self.url}/jsonrpc"
 
-        # Request ID counter
-        self._request_id = 0
+        # Thread-safe request ID counter
+        self._request_id_counter = itertools.count(1)
+
+        # TTL cache for discovery results
+        self._cache = _TTLCache()
 
         # Connect and authenticate
         self._connect()
 
-    def _jsonrpc_call(self, service: str, method: str, *args) -> Any:
+    def _jsonrpc_call(self, service: str, method: str, *args: Any) -> Any:
         """
         Make a JSON-RPC 1.x call to Odoo
 
@@ -108,13 +145,13 @@ class OdooClient:
         Returns:
             Result of the method call
         """
-        self._request_id += 1
+        request_id = next(self._request_id_counter)
 
         payload = {
             "jsonrpc": "1.0",
             "method": "call",
             "params": {"service": service, "method": method, "args": list(args)},
-            "id": self._request_id,
+            "id": request_id,
         }
 
         try:
@@ -352,6 +389,11 @@ class OdooClient:
             List of dicts with 'name' and 'string' keys, e.g.:
             [{"name": "action_confirm", "string": "Confirm"}]
         """
+        cache_key = f"buttons:{model_name}"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         try:
             views = self._execute(
                 "ir.ui.view",
@@ -402,6 +444,7 @@ class OdooClient:
                         seen.add(btn_name)
                         buttons.append({"name": btn_name, "string": btn_string})
 
+            self._cache.set(cache_key, buttons)
             return buttons
         except Exception as e:
             print(f"discover_model_buttons({model_name}) failed: {e}", file=sys.stderr)
@@ -462,6 +505,10 @@ class OdooClient:
         Returns:
             List of workflow dicts with activities and transitions.
         """
+        cached = self._cache.get("workflows")
+        if cached is not None:
+            return cached
+
         try:
             # Check if workflow model is accessible
             wf_ids = self._execute("workflow", "search", [], {"limit": 100})
@@ -566,6 +613,7 @@ class OdooClient:
 
                 results.append(wf_entry)
 
+            self._cache.set("workflows", results)
             return results
         except Exception as e:
             print(f"discover_workflows() failed: {e}", file=sys.stderr)
@@ -582,6 +630,10 @@ class OdooClient:
         Returns:
             List of dicts with model name, display name, and state field values.
         """
+        cached = self._cache.get("state_machines")
+        if cached is not None:
+            return cached
+
         try:
             # Find models with a 'state' selection field
             state_fields = self._execute(
@@ -650,6 +702,7 @@ class OdooClient:
                     )
                     continue
 
+            self._cache.set("state_machines", results)
             return results
         except Exception as e:
             print(f"discover_state_machines() failed: {e}", file=sys.stderr)
@@ -794,7 +847,19 @@ def load_config() -> dict[str, str]:
         if os.path.exists(expanded_path):
             print(f"Loading configuration from: {expanded_path}", file=sys.stderr)
             with open(expanded_path, "r") as f:
-                return json.load(f)
+                cfg = json.load(f)
+            if not isinstance(cfg, dict):
+                raise ValueError(
+                    f"Config file {expanded_path} must contain a JSON object, "
+                    f"got {type(cfg).__name__}"
+                )
+            missing = {"url", "db", "username", "password"} - set(cfg.keys())
+            if missing:
+                raise ValueError(
+                    f"Config file {expanded_path} is missing required keys: "
+                    f"{', '.join(sorted(missing))}"
+                )
+            return cfg
 
     raise FileNotFoundError(
         "No Odoo configuration found. Please create a .env file, set environment variables, or create an odoo_config.json file.\n"
@@ -835,6 +900,11 @@ def get_odoo_client() -> OdooClient:
         config = load_config()
 
         password = config.get("password") or os.environ.get("ODOO_PASSWORD")
+        if not password:
+            raise ValueError(
+                "ODOO_PASSWORD is required but not set. "
+                "Set it via environment variable, .env file, or odoo_config.json."
+            )
 
         # Get additional options from environment variables
         timeout = int(os.environ.get("ODOO_TIMEOUT", "30"))

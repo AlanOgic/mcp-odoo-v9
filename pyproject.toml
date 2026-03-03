@@ -27,6 +27,7 @@ dependencies = [
     "fastmcp>=3.0.0,<4",
     "requests>=2.31.0",
     "python-dotenv>=1.0.0",
+    "defusedxml>=0.7.1",
 ]
 
 [project.urls]

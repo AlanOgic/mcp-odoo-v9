@@ -10,13 +10,14 @@ Project instructions for Claude Code when working in this repository.
 
 ## Architecture
 
-### Server Layer (`src/odoo_mcp/server.py` — ~1230 lines)
+### Server Layer (`src/odoo_mcp/server.py`)
 
 - FastMCP 3.x (MCP 2025-06-18 spec)
-- 2 tools: `execute_method` (line 767), `batch_execute` (line 1027)
+- 2 tools: `execute_method`, `batch_execute`
 - 9 resources (deduplicated, no overlap)
 - 3 prompts: search-customers, create-sales-order, odoo-exploration
-- Smart limits: DEFAULT_LIMIT=100, MAX_LIMIT=1000 (line 865)
+- Smart limits: DEFAULT_LIMIT=100, MAX_LIMIT=1000
+- Extracted helpers: `_normalize_domain()`, `_normalize_search_args()`, `_apply_smart_limits()` — shared by both tools
 
 **Resources:**
 
@@ -32,15 +33,22 @@ Project instructions for Claude Code when working in this repository.
 | `odoo://search/{name}/{domain}` | 0.5 | Search records matching a domain |
 | `odoo://server/info` | 0.4 | Server version, database, installed modules |
 
-### Client Layer (`src/odoo_mcp/odoo_client.py` — ~775 lines)
+### Client Layer (`src/odoo_mcp/odoo_client.py`)
 
 - JSON-RPC via `/jsonrpc` endpoint, UID+password auth per request
-- Singleton: `get_odoo_client()`
+- Singleton: `get_odoo_client()` (thread-safe, double-checked locking)
+- Thread-safe request IDs: `itertools.count()`
+- TTL-cached discovery (5 min): `discover_model_buttons`, `discover_workflows`, `discover_state_machines`
+- XML parsing: `defusedxml.ElementTree` (XXE-safe)
 - Dynamic discovery:
-  - `discover_model_buttons(model)` (line 289) — parses form view XML for business methods
-  - `get_state_field_info(model)` (line 349) — state/stage selection values
-  - `discover_workflows()` (line 394) — formal Odoo v9 workflow engine
-  - `discover_state_machines()` (line 507) — models with state selection fields
+  - `discover_model_buttons(model)` — parses form view XML for business methods
+  - `get_state_field_info(model)` — state/stage selection values
+  - `discover_workflows()` — formal Odoo v9 workflow engine
+  - `discover_state_machines()` — models with state selection fields
+
+### Shared Utilities
+
+- `src/odoo_mcp/logging_utils.py` — `TeeLogger` and `setup_tee_logging()` (used by SSE/HTTP runners)
 
 ## Quick Reference
 
@@ -71,6 +79,8 @@ docker build -t alanogic/mcp-odoo-v9:latest -f Dockerfile .
 
 **.env search order:** `$ODOO_CONFIG_DIR/.env` > `./.env` > `~/.config/odoo/.env` > `~/.env`
 
+**JSON config validation:** Required keys (`url`, `db`, `username`, `password`) are validated on load.
+
 ## File Map
 
 ```
@@ -78,26 +88,29 @@ src/odoo_mcp/
   __init__.py          # Package init
   __main__.py          # CLI entry point (odoo-mcp-v9 command)
   server.py            # MCP server: tools, resources, prompts, smart limits
-  odoo_client.py       # JSON-RPC client, discovery methods
+  odoo_client.py       # JSON-RPC client, discovery methods, TTL cache
+  logging_utils.py     # Shared TeeLogger for transport runners
 run_server.py          # STDIO runner (logging to ./logs/)
 run_server_sse.py      # SSE runner (port 8009)
 run_server_http.py     # HTTP runner (port 8008)
-pyproject.toml         # setuptools, Python 3.10+, deps: fastmcp, requests, python-dotenv
+pyproject.toml         # setuptools, Python 3.10+, deps: fastmcp, requests, python-dotenv, defusedxml
 fastmcp.json           # MCP metadata
 COOKBOOK.md             # 40+ usage examples (main documentation)
 ```
 
 ## Implementation Details
 
-### Domain Normalization (server.py, inside execute_method)
+### Domain Normalization (server.py, `_normalize_domain()`)
 
+Extracted helper used by both `execute_method` and `batch_execute`.
 Accepts all these formats and normalizes to Odoo-native:
 - `[["field", "=", "value"]]` — native
 - `{"conditions": [{...}]}` — object format
 - `'[["field", "=", "value"]]'` — JSON string
 - `["field", "=", "value"]` — single condition (auto-wrapped)
+- `[[["field", "=", "value"]]]` — double-wrapped (auto-unwrapped)
 
-### Smart Limits (server.py:865-1012)
+### Smart Limits (server.py, `_apply_smart_limits()`)
 
 Applied to search, search_read, search_count:
 1. No limit provided → apply DEFAULT_LIMIT=100
@@ -108,6 +121,10 @@ Applied to search, search_read, search_count:
 ### Auth Flow
 
 JSON-RPC authenticate → get UID → UID+password on every `execute_kw` call via `/jsonrpc`.
+
+### Discovery Cache (odoo_client.py, `_TTLCache`)
+
+Thread-safe TTL cache (5 min default) reduces N+1 queries from discovery methods.
 
 ## Development Patterns
 
@@ -143,6 +160,14 @@ execute_method(model="your.model", method="search_read",
 ## Compatibility
 
 Python 3.10+ | FastMCP 3.x | Odoo 9.0 (JSON-RPC) | MCP 2025-06-18
+
+## Docker
+
+- All Dockerfiles use Python 3.12 (configurable via `--build-arg PYTHON_VERSION=3.13`)
+- Production install (`pip install .`, not editable)
+- Non-root user (`appuser:appgroup`, UID 1001)
+- HEALTHCHECK on all containers
+- Restrictive log file permissions (0o600)
 
 ## Rules
 

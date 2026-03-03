@@ -54,6 +54,140 @@ MAX_LIMIT = 1000  # Hard maximum to cap queries
 SEARCH_METHODS = frozenset({"search", "search_count", "search_read"})
 
 
+def _normalize_domain(domain: Any) -> list[Any]:
+    """
+    Normalize a search domain from various formats to Odoo-native list-of-lists.
+
+    Accepts:
+    - None → []
+    - [["field", "=", "value"]] — native (passthrough)
+    - {"conditions": [{...}]} — object format
+    - '[[...]]' — JSON string
+    - ["field", "=", "value"] — single condition (auto-wrapped)
+    - [[["field", "=", "value"]]] — double-wrapped (auto-unwrapped)
+
+    Returns:
+        Normalized domain as a list of conditions.
+    """
+    domain_list: list[Any] = []
+
+    # Unwrap double-wrapped domains: [[[field, op, val]]] → [[field, op, val]]
+    if (
+        isinstance(domain, list)
+        and len(domain) == 1
+        and isinstance(domain[0], list)
+    ):
+        domain = domain[0]
+
+    if domain is None:
+        domain_list = []
+    elif isinstance(domain, dict):
+        if "conditions" in domain:
+            conditions = domain.get("conditions", [])
+            for cond in conditions:
+                if isinstance(cond, dict) and all(
+                    k in cond for k in ["field", "operator", "value"]
+                ):
+                    domain_list.append(
+                        [cond["field"], cond["operator"], cond["value"]]
+                    )
+    elif isinstance(domain, list):
+        if not domain:
+            domain_list = []
+        elif all(isinstance(item, list) for item in domain) or any(
+            item in ["&", "|", "!"] for item in domain
+        ):
+            domain_list = domain
+        elif len(domain) >= 3 and isinstance(domain[0], str):
+            domain_list = [domain]
+    elif isinstance(domain, str):
+        try:
+            parsed_domain = json.loads(domain)
+            if isinstance(parsed_domain, dict) and "conditions" in parsed_domain:
+                conditions = parsed_domain.get("conditions", [])
+                for cond in conditions:
+                    if isinstance(cond, dict) and all(
+                        k in cond for k in ["field", "operator", "value"]
+                    ):
+                        domain_list.append(
+                            [cond["field"], cond["operator"], cond["value"]]
+                        )
+            elif isinstance(parsed_domain, list):
+                domain_list = parsed_domain
+        except json.JSONDecodeError:
+            print(
+                f"⚠️ Domain string is not valid JSON, using empty domain: {domain[:200]}",
+                file=sys.stderr,
+            )
+            domain_list = []
+
+    # Validate conditions
+    if domain_list:
+        valid_conditions: list[Any] = []
+        for cond in domain_list:
+            if isinstance(cond, str) and cond in ["&", "|", "!"]:
+                valid_conditions.append(cond)
+                continue
+            if (
+                isinstance(cond, list)
+                and len(cond) == 3
+                and isinstance(cond[0], str)
+                and isinstance(cond[1], str)
+            ):
+                valid_conditions.append(cond)
+        domain_list = valid_conditions
+
+    return domain_list
+
+
+def _normalize_search_args(method: str, args: list[Any]) -> list[Any]:
+    """
+    Normalize domain in args[0] for search methods and return updated args.
+    """
+    if method not in SEARCH_METHODS or not args:
+        return args
+
+    normalized_args = list(args)
+    if len(normalized_args) > 0:
+        domain_list = _normalize_domain(normalized_args[0])
+        normalized_args[0] = domain_list
+        print(
+            f"Executing {method} with normalized domain: {domain_list}",
+            file=sys.stderr,
+        )
+
+    return normalized_args
+
+
+def _apply_smart_limits(method: str, kwargs: dict[str, Any]) -> dict[str, Any]:
+    """
+    Apply smart limits for search methods. Returns updated kwargs.
+    """
+    if method not in SEARCH_METHODS or method == "search_count":
+        return kwargs
+
+    if "limit" not in kwargs:
+        kwargs["limit"] = DEFAULT_LIMIT
+        print(
+            f"⚠️  No limit specified for {method}, applying default limit={DEFAULT_LIMIT}",
+            file=sys.stderr,
+        )
+    elif kwargs.get("limit", 0) > MAX_LIMIT:
+        original_limit = kwargs["limit"]
+        kwargs["limit"] = MAX_LIMIT
+        print(
+            f"⚠️  Requested limit={original_limit} exceeds maximum, capping to limit={MAX_LIMIT}",
+            file=sys.stderr,
+        )
+    elif kwargs.get("limit", 0) == 0 or kwargs.get("limit") is False:
+        print(
+            "⚠️  WARNING: Unlimited query requested! This may return massive datasets.",
+            file=sys.stderr,
+        )
+
+    return kwargs
+
+
 # ----- MCP Resources -----
 # Note: Resources use get_odoo_client() (thread-safe singleton) because FastMCP
 # resources don't receive a Context object. Tools use the lifespan context.
@@ -753,8 +887,8 @@ def execute_method(
     ctx: Context,
     model: str,
     method: str,
-    args_json: str = None,
-    kwargs_json: str = None,
+    args_json: str | None = None,
+    kwargs_json: str | None = None,
 ) -> dict[str, Any]:
     """
     Execute ANY method on an Odoo model - UNIVERSAL FALLBACK TOOL
@@ -845,134 +979,9 @@ def execute_method(
                     "error": f"Invalid JSON in kwargs_json: {str(e)}",
                 }
 
-        # Special handling for search methods like search, search_count, search_read
-        search_methods = SEARCH_METHODS
-        if method in search_methods and args:
-            # Search methods usually have domain as the first parameter
-            # args: [[domain], limit, offset, ...] or [domain, limit, offset, ...]
-            normalized_args = list(
-                args
-            )  # Create a copy to avoid affecting the original args
-
-            if len(normalized_args) > 0:
-                # Process domain in args[0]
-                domain = normalized_args[0]
-                domain_list = []
-
-                # Check if domain is wrapped unnecessarily ([domain] instead of domain)
-                if (
-                    isinstance(domain, list)
-                    and len(domain) == 1
-                    and isinstance(domain[0], list)
-                ):
-                    # Case [[domain]] - unwrap to [domain]
-                    domain = domain[0]
-
-                # Normalize domain similar to search_records function
-                if domain is None:
-                    domain_list = []
-                elif isinstance(domain, dict):
-                    if "conditions" in domain:
-                        # Object format
-                        conditions = domain.get("conditions", [])
-                        domain_list = []
-                        for cond in conditions:
-                            if isinstance(cond, dict) and all(
-                                k in cond for k in ["field", "operator", "value"]
-                            ):
-                                domain_list.append(
-                                    [cond["field"], cond["operator"], cond["value"]]
-                                )
-                elif isinstance(domain, list):
-                    # List format
-                    if not domain:
-                        domain_list = []
-                    elif all(isinstance(item, list) for item in domain) or any(
-                        item in ["&", "|", "!"] for item in domain
-                    ):
-                        domain_list = domain
-                    elif len(domain) >= 3 and isinstance(domain[0], str):
-                        # Case [field, operator, value] (not [[field, operator, value]])
-                        domain_list = [domain]
-                elif isinstance(domain, str):
-                    # String format (JSON)
-                    try:
-                        parsed_domain = json.loads(domain)
-                        if (
-                            isinstance(parsed_domain, dict)
-                            and "conditions" in parsed_domain
-                        ):
-                            conditions = parsed_domain.get("conditions", [])
-                            domain_list = []
-                            for cond in conditions:
-                                if isinstance(cond, dict) and all(
-                                    k in cond for k in ["field", "operator", "value"]
-                                ):
-                                    domain_list.append(
-                                        [cond["field"], cond["operator"], cond["value"]]
-                                    )
-                        elif isinstance(parsed_domain, list):
-                            domain_list = parsed_domain
-                    except json.JSONDecodeError:
-                        print(
-                            f"⚠️ Domain string is not valid JSON, using empty domain: {domain[:200]}",
-                            file=sys.stderr,
-                        )
-                        domain_list = []
-
-                # Validate domain_list
-                if domain_list:
-                    valid_conditions = []
-                    for cond in domain_list:
-                        if isinstance(cond, str) and cond in ["&", "|", "!"]:
-                            valid_conditions.append(cond)
-                            continue
-
-                        if (
-                            isinstance(cond, list)
-                            and len(cond) == 3
-                            and isinstance(cond[0], str)
-                            and isinstance(cond[1], str)
-                        ):
-                            valid_conditions.append(cond)
-
-                    domain_list = valid_conditions
-
-                # Update args with normalized domain
-                normalized_args[0] = domain_list
-                args = normalized_args
-
-                # Log for debugging
-                print(
-                    f"Executing {method} with normalized domain: {domain_list}",
-                    file=sys.stderr,
-                )
-
-        # Apply smart limits for search methods (can be overridden in kwargs)
-        # Note: search_count does not accept limit/offset, only domain normalization above
-        if method in search_methods and method != "search_count":
-            # Check if user provided a limit
-            if "limit" not in kwargs:
-                # No limit provided - apply safe default
-                kwargs["limit"] = DEFAULT_LIMIT
-                print(
-                    f"⚠️  No limit specified for {method}, applying default limit={DEFAULT_LIMIT}",
-                    file=sys.stderr,
-                )
-            elif kwargs.get("limit", 0) > MAX_LIMIT:
-                # User requested too much - cap it
-                original_limit = kwargs["limit"]
-                kwargs["limit"] = MAX_LIMIT
-                print(
-                    f"⚠️  Requested limit={original_limit} exceeds maximum, capping to limit={MAX_LIMIT}",
-                    file=sys.stderr,
-                )
-            elif kwargs.get("limit", 0) == 0 or kwargs.get("limit") is False:
-                # User explicitly wants unlimited (limit=0 or limit=False) - allow but warn
-                print(
-                    "⚠️  WARNING: Unlimited query requested! This may return massive datasets.",
-                    file=sys.stderr,
-                )
+        # Normalize domain and apply smart limits
+        args = _normalize_search_args(method, args)
+        kwargs = _apply_smart_limits(method, kwargs)
 
         # Apply limits for read method too
         if method == "read" and args:
@@ -1083,13 +1092,11 @@ def batch_execute(
                 else:
                     kwargs = {}
 
-                # Apply smart limits for search methods (same as execute_method)
-                if method in SEARCH_METHODS and method != "search_count":
-                    if isinstance(kwargs, dict):
-                        if "limit" not in kwargs:
-                            kwargs["limit"] = DEFAULT_LIMIT
-                        elif kwargs.get("limit", 0) > MAX_LIMIT:
-                            kwargs["limit"] = MAX_LIMIT
+                # Normalize domain and apply smart limits (parity with execute_method)
+                if isinstance(args, list):
+                    args = _normalize_search_args(method, args)
+                if isinstance(kwargs, dict):
+                    kwargs = _apply_smart_limits(method, kwargs)
 
                 # Execute the operation
                 result = odoo.execute_method(model, method, *args, **kwargs)
