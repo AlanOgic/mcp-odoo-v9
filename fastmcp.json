@@ -1,0 +1,51 @@
+{
+  "name": "odoo-mcp-v9",
+  "version": "1.0.0",
+  "entrypoint": "src/odoo_mcp/server.py",
+  "description": "MCP Server for Odoo v9 (JSON-RPC) with Multiple Transport Support (STDIO, SSE, HTTP)",
+  "author": "Alan Ogic <info@alanogic.com>",
+  "license": "GPL-3.0-or-later",
+  "repository": "https://github.com/AlanOgic/mcp-odoo-v9",
+  "keywords": ["odoo", "odoo 9", "odoo v9", "mcp", "server", "stdio", "sse", "streaming", "http"],
+  "environment": {
+    "dependencies": ["requests>=2.31.0", "fastmcp>=3.0.0,<4"]
+  },
+  "configuration": {
+    "ODOO_URL": {
+      "type": "string",
+      "description": "Odoo v9 server URL",
+      "required": true
+    },
+    "ODOO_DB": {
+      "type": "string",
+      "description": "Odoo database name",
+      "required": true
+    },
+    "ODOO_USERNAME": {
+      "type": "string",
+      "description": "Odoo username",
+      "required": true
+    },
+    "ODOO_PASSWORD": {
+      "type": "string",
+      "description": "Odoo password",
+      "required": true,
+      "secret": true
+    },
+    "ODOO_TIMEOUT": {
+      "type": "integer",
+      "description": "Connection timeout in seconds",
+      "default": 30
+    },
+    "ODOO_VERIFY_SSL": {
+      "type": "boolean",
+      "description": "Whether to verify SSL certificates",
+      "default": true
+    },
+    "HTTP_PROXY": {
+      "type": "string",
+      "description": "HTTP proxy URL for Odoo connection",
+      "required": false
+    }
+  }
+}

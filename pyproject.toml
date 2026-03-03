@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "odoo-mcp-v9"
+version = "1.0.0"
+description = "MCP Server for Odoo v9 (JSON-RPC) with Multiple Transport Support (STDIO, SSE, HTTP)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+classifiers = [
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: OS Independent",
+]
+keywords = ["odoo", "odoo 9", "odoo v9", "mcp", "odoo-mcp", "mcp server", "server", "docker", "stdio", "sse", "streaming http"]
+authors = [
+    {name = "Alan Ogic", email = "info@alanogic.com"}
+]
+
+dependencies = [
+    "fastmcp>=3.0.0,<4",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/AlanOgic/mcp-odoo-v9"
+Issues = "https://github.com/AlanOgic/mcp-odoo-v9/issues"
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+    "ruff",
+    "build",
+    "twine",
+]
+
+[project.scripts]
+odoo-mcp-v9 = "odoo_mcp.__main__:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["odoo_mcp"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310", "py311", "py312", "py313"]
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.mypy]
+python_version = "3.12"  # Minimum version for compatibility checking
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
