@@ -2,137 +2,259 @@
 
 **Two tools. Infinite possibilities. Full Odoo v9 API access.**
 
-An MCP (Model Context Protocol) server for **Odoo v9** ERP systems, enabling AI assistants to interact with Odoo data and functionality using STDIO, SSE, StreamingHttp via JSON-RPC.
+An MCP (Model Context Protocol) server for **Odoo v9** ERP systems, enabling AI assistants to interact with Odoo data and functionality via JSON-RPC.
 
-> **For Odoo 14+**, use [mcp-odoo-v9](https://github.com/AlanOgic/mcp-odoo-v9) instead.
-
----
-
-## 🎯 Philosophy: Simplicity & Power
-
-Connect AI assistants to Odoo with just **two universal tools**:
-
-1. **`execute_method`** - Call any Odoo method on any model
-2. **`batch_execute`** - Execute multiple operations atomically
-
-No complexity. No limitations. Full Odoo API access.
-
-### To rule them all. What You Can Do
-
-Everything you need, just ask AI: automate, query, manage, customize, develop new modules, integrate with external systems, enhance your Odoo instance through AI.
+> **For Odoo 14+**, see [mcp-odoo](https://github.com/tuanle96/mcp-odoo).
 
 ---
 
-## 🚀 Quick Start
+## 30-Second Quick Start
 
-### Installation
-
-**Option 1: Traditional pip install**
+**1. Set your credentials** (once):
 
 ```bash
-# From source
-git clone https://github.com/AlanOgic/mcp-odoo-v9.git
-cd mcp-odoo-v9
-# Virtual Environment
-python3 -m venv .venv
-source .venv/bin/activate
-# Installation
-pip install -e .
-```
-
-**Option 2: Using uvx (No Installation)**
-
-```bash
-# From source directory
-uvx --from . odoo-mcp-v9
-
-```
-
-**Option 3: Using Docker**
-
-```bash
-# build STDIO
-docker build -t alanogic/mcp-odoo-v9:latest -f Dockerfile .
-
-# build SSE
-docker build -t alanogic/mcp-odoo-v9-sse:latest -f Dockerfile.sse .
-
-# build HTTP
-docker build -t alanogic/mcp-odoo-v9-http:latest -f Dockerfile.http .
-
-# Run STDIO
-docker run --env-file .env alanogic/mcp-odoo-v9:latest
-
-# Run SSE
-docker run --env-file .env alanogic/mcp-odoo-v9-sse:latest
-
-# Run HTTP
-docker run --env-file .env alanogic/mcp-odoo-v9-http:latest
-```
-
-### Configuration
-
-Create a `.env` file (minimum):
-
-```bash
-cp .env.example .env
-vim .env
-```
-
-```bash
+mkdir -p ~/.config/odoo
+cat > ~/.config/odoo/.env << 'EOF'
 ODOO_URL=https://your-odoo-instance.com
-ODOO_DB=your-database-name
+ODOO_DB=your-database
 ODOO_USERNAME=your-username
 ODOO_PASSWORD=your-password
+EOF
 ```
 
-**Optional: Custom Configuration Directory**
+**2. Add to your AI client** and start talking to your Odoo:
 
-Organize multiple Odoo configurations by setting a custom directory:
+<details>
+<summary><b>Claude Desktop / Claude Code</b></summary>
 
-```bash
-# Create custom config directory
-export ODOO_CONFIG_DIR=~/mcp-odoo-env
-mkdir -p $ODOO_CONFIG_DIR
-
-# Copy and configure
-cp .env.example $ODOO_CONFIG_DIR/.env
-vim $ODOO_CONFIG_DIR/.env
-
-# Run server (automatically uses custom directory)
-python run_server.py
-```
-
-This is useful for:
-- Managing multiple Odoo instances (dev, staging, production)
-- Organizing configs outside project directory
-- Docker/Compose deployments with volume mounts
-
-### Run Server
-
-```bash
-# STDIO (Claude Desktop)
-python run_server.py
-
-# SSE (Web browsers)
-python run_server_sse.py
-
-# HTTP (API integrations)
-python run_server_http.py
-```
-
-### Claude Desktop Setup
-
-**Option 1: Using local installation**
-
-Add to `claude_desktop_config.json`:
+Add to your `claude_desktop_config.json` (or `.claude.json` for Claude Code):
 
 ```json
 {
   "mcpServers": {
-    "odoo": {
-      "command": "python",
-      "args": ["-m", "odoo_mcp"],
+    "odoo-v9": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/AlanOgic/mcp-odoo-v9", "odoo-mcp-v9"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Cursor / Windsurf / any MCP client</b></summary>
+
+Add to your MCP config (`.cursor/mcp.json`, etc.):
+
+```json
+{
+  "mcpServers": {
+    "odoo-v9": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/AlanOgic/mcp-odoo-v9", "odoo-mcp-v9"]
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><b>Docker</b></summary>
+
+```bash
+docker run -i --rm \
+  -e ODOO_URL=https://your-instance.com \
+  -e ODOO_DB=your-database \
+  -e ODOO_USERNAME=your-username \
+  -e ODOO_PASSWORD=your-password \
+  alanogic/mcp-odoo-v9:latest
+```
+
+</details>
+
+**3. Done.** Ask your AI: *"Show me all installed modules"* or *"Create a new customer named Acme Corp"*.
+
+---
+
+## What You Get
+
+### Two Universal Tools
+
+| Tool | What it does |
+|------|-------------|
+| **`execute_method`** | Call **any** Odoo method on **any** model — search, create, update, delete, confirm orders, validate invoices, anything |
+| **`batch_execute`** | Run multiple operations atomically — all succeed or all rollback |
+
+### Nine Discovery Resources
+
+Your AI reads these automatically to understand your Odoo instance:
+
+| Resource | What it provides |
+|----------|-----------------|
+| `odoo://models` | All available models |
+| `odoo://model/{name}/schema` | Fields, relationships, constraints |
+| `odoo://methods/{name}` | ORM + dynamically discovered business methods & state info |
+| `odoo://workflows` | Workflow guides + discovered formal workflows & state machines |
+| `odoo://model/{name}` | Quick summary: name, record count |
+| `odoo://model/{name}/access` | Your CRUD permissions |
+| `odoo://record/{name}/{id}` | Read a single record |
+| `odoo://search/{name}/{domain}` | Search with domain filters |
+| `odoo://server/info` | Server version, installed modules |
+
+### Three Prompts
+
+Ready-made templates your AI can use: **search-customers**, **create-sales-order**, **odoo-exploration**.
+
+---
+
+## Examples
+
+```python
+# Search customers
+execute_method(
+    model="res.partner",
+    method="search_read",
+    args_json='[[["customer", "=", true]]]',
+    kwargs_json='{"fields": ["name", "email"], "limit": 20}'
+)
+
+# Create a sales order
+execute_method(
+    model="sale.order",
+    method="create",
+    args_json='[{"partner_id": 8, "order_line": [[0, 0, {"product_id": 5, "product_uom_qty": 1}]]}]'
+)
+
+# Confirm it
+execute_method(
+    model="sale.order",
+    method="action_button_confirm",
+    args_json='[[5]]'
+)
+
+# Batch: create customer + order atomically
+batch_execute(
+    operations=[
+        {"model": "res.partner", "method": "create", "args_json": "[{\"name\": \"Acme Corp\"}]"},
+        {"model": "sale.order", "method": "create", "args_json": "[{\"partner_id\": 123}]"}
+    ],
+    atomic=True
+)
+```
+
+See **[COOKBOOK.md](COOKBOOK.md)** for 40+ more examples.
+
+---
+
+## Installation Options
+
+### uvx (Recommended — zero install)
+
+```bash
+uvx --from git+https://github.com/AlanOgic/mcp-odoo-v9 odoo-mcp-v9
+```
+
+No installation, no venv, no dependencies to manage. Just run.
+
+### pip
+
+```bash
+git clone https://github.com/AlanOgic/mcp-odoo-v9.git
+cd mcp-odoo-v9
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .
+```
+
+### Docker
+
+```bash
+# Build
+docker build -t alanogic/mcp-odoo-v9:latest -f Dockerfile .
+
+# Run (STDIO for Claude Desktop)
+docker run -i --rm --env-file .env alanogic/mcp-odoo-v9:latest
+
+# Run (SSE for web clients)
+docker run -p 8009:8009 --env-file .env alanogic/mcp-odoo-v9:sse
+
+# Run (HTTP for API integrations)
+docker run -p 8008:8008 --env-file .env alanogic/mcp-odoo-v9:http
+```
+
+---
+
+## Configuration
+
+Create a `.env` file in any of these locations (checked in order):
+
+1. `$ODOO_CONFIG_DIR/.env` — custom directory (set via env var)
+2. `.env` — current working directory
+3. `~/.config/odoo/.env` — user config (recommended for uvx)
+4. `~/.env` — home directory
+
+**Required variables:**
+
+```bash
+ODOO_URL=https://your-odoo-instance.com
+ODOO_DB=your-database
+ODOO_USERNAME=your-username
+ODOO_PASSWORD=your-password
+```
+
+**Optional variables:**
+
+```bash
+ODOO_TIMEOUT=30          # Connection timeout (default: 30s)
+ODOO_VERIFY_SSL=true     # SSL verification (default: true)
+HTTP_PROXY=http://proxy  # HTTP proxy for Odoo connection
+```
+
+Or pass credentials directly via environment variables in your MCP client config (see Quick Start above).
+
+---
+
+## AI Client Setup
+
+### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "odoo-v9": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/AlanOgic/mcp-odoo-v9", "odoo-mcp-v9"]
+    }
+  }
+}
+```
+
+### Claude Code
+
+Add to your project's `.mcp.json` or global `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "odoo-v9": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/AlanOgic/mcp-odoo-v9", "odoo-mcp-v9"]
+    }
+  }
+}
+```
+
+### With inline credentials (no .env file needed)
+
+```json
+{
+  "mcpServers": {
+    "odoo-v9": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/AlanOgic/mcp-odoo-v9", "odoo-mcp-v9"],
       "env": {
         "ODOO_URL": "https://your-instance.odoo.com",
         "ODOO_DB": "your-database",
@@ -144,294 +266,60 @@ Add to `claude_desktop_config.json`:
 }
 ```
 
-**Option 2: Using uvx (Recommended - No Installation)**
+### With Docker
 
-First, create your credentials in `~/.config/odoo/.env`:
+```json
+{
+  "mcpServers": {
+    "odoo-v9": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--env-file", "/path/to/.env", "alanogic/mcp-odoo-v9:latest"]
+    }
+  }
+}
+```
+
+### Running the server standalone
 
 ```bash
-mkdir -p ~/.config/odoo
-cat > ~/.config/odoo/.env << 'EOF'
-ODOO_URL=https://your-instance.odoo.com
-ODOO_DB=your-database
-ODOO_USERNAME=your-username
-ODOO_PASSWORD=your-password
-EOF
-```
+# STDIO (default, for Claude Desktop)
+python run_server.py
 
-Then add to `claude_desktop_config.json`:
+# SSE (port 8009, for web browsers)
+python run_server_sse.py
 
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "uvx",
-      "args": ["--from", "odoo-mcp-v9", "odoo-mcp-v9"]
-    }
-  }
-}
-```
-
-**Benefits:**
-- No installation required - uvx downloads and runs automatically
-- Credentials stored securely in `.env` file (not in config)
-- Always uses the latest published version
-- Works from anywhere on your system
-
-**Option 3: Using Docker**
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "docker",
-      "args": [
-        "run", "-i", "--rm",
-        "-e", "ODOO_URL=https://your-instance.odoo.com",
-        "-e", "ODOO_DB=your-database",
-        "-e", "ODOO_USERNAME=your-username",
-        "-e", "ODOO_PASSWORD=your-password",
-        "alanogic/mcp-odoo-v9:latest"
-      ]
-    }
-  }
-}
-```
-
-Or with `.env` file:
-
-```json
-{
-  "mcpServers": {
-    "odoo": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "--env-file", "/absolute/path/to/.env", "alanogic/mcp-odoo-v9:latest"]
-    }
-  }
-}
+# HTTP (port 8008, for API integrations)
+python run_server_http.py
 ```
 
 ---
 
-## 🔧 The Two Tools
+## Smart Limits
 
-### 1. execute_method - The Universal Powerhouse
+Built-in protection against accidentally returning massive datasets:
 
-Execute **ANY** Odoo method on **ANY** model. Full API access. No limitations.
+- **Default**: 100 records per query (if you don't specify a limit)
+- **Maximum**: 1,000 records per query (hard cap)
+- **Override**: Set `"limit"` in `kwargs_json` to your desired value
+- **Unlimited**: Set `"limit": 0` (allowed with warning)
 
-```python
-execute_method(
-    model="<model_name>",
-    method="<method_name>",
-    args_json='[...]',      # Positional arguments
-    kwargs_json='{...}'     # Keyword arguments
-)
-```
-
-**Examples:**
+For large datasets, use pagination:
 
 ```python
-# Search customers
-execute_method(
-    model="res.partner",
-    method="search_read",
-    args_json='[[["customer", "=", true]]]',
-    kwargs_json='{"fields": ["name", "email"], "limit": 20}'
-)
+# Count first
+execute_method(model="res.partner", method="search_count", args_json='[[["customer","=",true]]]')
 
-# Create sales order
-execute_method(
-    model="sale.order",
-    method="create",
-    args_json='[{"partner_id": 8, "order_line": [[0, 0, {"product_id": 5, "product_uom_qty": 1}]]}]'
-)
-
-# Confirm order
-execute_method(
-    model="sale.order",
-    method="action_button_confirm",
-    args_json='[[5]]'
-)
-```
-
-### 2. batch_execute - Atomic Transactions
-
-Execute multiple operations atomically. All succeed or all rollback.
-
-```python
-batch_execute(
-    operations=[
-        {
-            "model": "res.partner",
-            "method": "create",
-            "args_json": '[{"name": "New Customer"}]'
-        },
-        {
-            "model": "sale.order",
-            "method": "create",
-            "args_json": '[{"partner_id": 8}]'
-        }
-    ],
-    atomic=True  # All succeed or all fail
-)
+# Then paginate
+execute_method(model="res.partner", method="search_read",
+    args_json='[[["customer","=",true]]]',
+    kwargs_json='{"fields": ["name"], "limit": 100, "offset": 0}')
 ```
 
 ---
 
-## 📚 Documentation
+## Domain Operators
 
-### Essential Resources
-
-**Before using the tools, check these resources:**
-
-- **`odoo://model/{model}/schema`** - Field definitions, relationships, required fields
-- **`odoo://model/{model}/access`** - Your permissions (read/write/create/delete)
-- **`odoo://methods/{model}`** - ORM methods + dynamically discovered business methods & state info
-- **`odoo://workflows`** - Hardcoded workflow guides + dynamically discovered formal workflows & state machines
-- **`odoo://server/info`** - Odoo version and installed modules
-
-### The Cookbook
-
-**[📖 COOKBOOK.md](COOKBOOK.md)** - 40+ practical examples:
-
-- Searching & filtering
-- Creating records
-- Updating & deleting
-- Working with relationships
-- Business workflows
-- Batch operations
-- Advanced patterns
-
-**Start here!** The cookbook shows you how to accomplish anything with just 2 tools.
-
-### Prompts
-
-**User-selectable templates in Claude's menu:**
-
-- **`search-customers`** - Find customers with filters
-- **`create-sales-order`** - Create sales orders step-by-step
-- **`odoo-exploration`** - Discover your Odoo instance capabilities
-
----
-
-## 🎓 Learn with examples
-
-### Example 1: Find Employees
-
-```python
-execute_method(
-    model="hr.employee",
-    method="search_read",
-    args_json='[[["name", "ilike", "john"]]]',
-    kwargs_json='{"fields": ["name", "job_id", "department_id"], "limit": 10}'
-)
-```
-
-### Example 2: Time Off Requests
-
-```python
-execute_method(
-    model="hr.holidays",
-    method="search_read",
-    args_json='[[
-        ["employee_id", "=", 1],
-        ["date_from", ">=", "2025-01-01"],
-        ["state", "=", "validate"]
-    ]]',
-    kwargs_json='{"fields": ["employee_id", "date_from", "date_to", "holiday_status_id"]}'
-)
-```
-
-### Example 3: Create Customer + Order (Atomic)
-
-```python
-batch_execute(
-    operations=[
-        {
-            "model": "res.partner",
-            "method": "create",
-            "args_json": '[{"name": "Acme Corp", "email": "contact@acme.com"}]'
-        },
-        {
-            "model": "sale.order",
-            "method": "create",
-            "args_json": '[{"partner_id": 123, "order_line": [[0, 0, {"product_id": 5}]]}]'
-        }
-    ],
-    atomic=True
-)
-```
-
----
-
-## 💡 Why This Design Works
-
-### ✅ Key Benefits
-
-**1. Universal Access**
-- Full Odoo API at your fingertips
-- No artificial limitations
-- Do anything Odoo can do
-
-**2. Simple & Predictable**
-- Learn 2 tools, use everywhere
-- Clear mental model
-- Easy to debug and maintain
-
-**3. Reliable**
-- Odoo provides excellent native error messages
-- Direct API access means fewer points of failure
-- Stable, production-ready implementation
-
-**4. Flexible**
-- Designed for Odoo v9
-- Supports all Odoo models and methods
-- Extensible through Odoo's native capabilities
-
----
-
-## 🔥 Features
-
-### AI Integration
-* **Claude Desktop Ready**: Seamless integration with Claude Code
-* **Two Universal Tools**: Access the entire Odoo API with `execute_method` and `batch_execute`
-* **Dynamic Discovery**: Business methods, formal workflows, and state machines introspected from the live Odoo instance
-* **Smart Limits**: Automatic protection against oversized queries (configurable)
-* **MCP 2025 Compliant**: Latest Model Context Protocol specification
-
-### Multiple Connection Options
-* **STDIO**: Direct integration with Claude Desktop
-* **SSE**: Server-Sent Events for web browsers (port 8009)
-* **HTTP**: Streamable HTTP for API integrations (port 8008)
-* **Docker**: Pre-built containers for all transports
-
-### Enterprise Ready
-* **Odoo 9.0**: Designed for Odoo v9 (JSON-RPC)
-* **Flexible Auth**: Environment variables or config files
-* **Enhanced Logging**: Timestamped logs in `./logs/`
-* **Proxy Support**: HTTP proxy configuration
-* **SSL Control**: Configurable SSL verification
-* **Python 3.10-3.13**: Tested on all current Python versions
-
----
-
-## 🚀 Advanced Usage
-
-### Docker Deployment
-
-```bash
-# STDIO transport (Claude Desktop)
-docker run -i --rm --env-file .env alanogic/mcp-odoo-v9:latest
-
-# SSE transport (Web browsers)
-docker run -p 8009:8009 --env-file .env alanogic/mcp-odoo-v9:sse
-
-# HTTP transport (API integrations)
-docker run -p 8008:8008 --env-file .env alanogic/mcp-odoo-v9:http
-```
-
-### Domain Operators
-
-Common search operators:
+Common search operators for filtering:
 
 | Operator | Description | Example |
 |----------|-------------|---------|
@@ -443,67 +331,66 @@ Common search operators:
 
 ---
 
-## 📖 Documentation
+## Features
 
-**New to Odoo MCP Server?** Start here:
+### AI Integration
+* Two universal tools — full Odoo API access
+* Dynamic discovery — business methods, workflows, and state machines introspected from the live instance
+* Smart limits — automatic protection against oversized queries
+* MCP 2025 compliant — latest Model Context Protocol specification
 
-1. **[USER_GUIDE.md](USER_GUIDE.md)** - Complete setup guide with 5-minute quick-start
-2. **[COOKBOOK.md](COOKBOOK.md)** - 45+ practical examples for common tasks
-3. **[DOCKER.md](DOCS/DOCKER.md)** - Docker deployment guide (containers, compose, production)
-4. **[TRANSPORTS.md](DOCS/TRANSPORTS.md)** - Connection options (STDIO, SSE, HTTP)
-5. **[CLAUDE.md](DOCS/CLAUDE.md)** - Technical reference and architecture
-6. **[CHANGELOG.md](CHANGELOG.md)** - Version history and updates
+### Multiple Transports
+* **STDIO** — Claude Desktop, Claude Code
+* **SSE** — web browsers (port 8009)
+* **HTTP** — API integrations (port 8008)
+* **Docker** — pre-built containers for all transports
+
+### Production Ready
+* Odoo 9.0 via JSON-RPC
+* Python 3.10 - 3.13
+* Environment variables or config files
+* HTTP proxy support, configurable SSL
+* Enhanced logging to `./logs/`
 
 ---
 
-## 🤝 Contributing
+## Documentation
 
-Contributions welcome! Please:
+| Doc | What's in it |
+|-----|-------------|
+| **[COOKBOOK.md](COOKBOOK.md)** | 40+ practical examples |
+| **[USER_GUIDE.md](USER_GUIDE.md)** | Step-by-step setup guide |
+| **[DOCS/TRANSPORTS.md](DOCS/TRANSPORTS.md)** | STDIO, SSE, HTTP details |
+| **[DOCS/CLAUDE.md](DOCS/CLAUDE.md)** | Technical reference (850+ lines) |
+| **[CHANGELOG.md](CHANGELOG.md)** | Version history |
+
+---
+
+## Contributing
+
+Contributions welcome!
 
 1. Fork the repository
 2. Create feature branch (`git checkout -b feature/amazing`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing`)
-5. Open Pull Request
+3. Commit changes
+4. Push and open a Pull Request
 
-**Development philosophy:**
-- Simplicity first
-- Universal tools over specialized ones
-- Documentation over complexity
-- Reliability through directness
+**Philosophy:** Simplicity first. Universal tools over specialized ones. Documentation over complexity.
 
 ---
 
-## 📝 License
+## License
 
-GNU General Public License v3.0 or later (GPL-3.0-or-later) - See [LICENSE](LICENSE) file
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+GNU General Public License v3.0 or later (GPL-3.0-or-later) — See [LICENSE](LICENSE)
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-- Original project by [Lê Anh Tuấn](https://github.com/tuanle96/mcp-odoo)
+- Original project by [Le Anh Tuan](https://github.com/tuanle96/mcp-odoo)
 - Built with [FastMCP](https://github.com/jlowin/fastmcp)
 - Follows [Model Context Protocol](https://modelcontextprotocol.io) specification
 
 ---
 
-## 🎯 What's Next?
-
-**Ready to get started?**
-
-1. **Quick Setup**: Follow the [USER_GUIDE.md](USER_GUIDE.md) 5-minute quick-start
-2. **Learn by Example**: Browse [COOKBOOK.md](COOKBOOK.md) for 45+ recipes
-3. **Explore Your Odoo**: Use the `odoo-exploration` prompt in Claude
-4. **Build & Automate**: Create custom workflows with `execute_method`
-
-**Need help?**
-- 📖 Check the [USER_GUIDE.md](USER_GUIDE.md) troubleshooting section
-- 💬 Open an [issue](https://github.com/AlanOgic/mcp-odoo-v9/issues) on GitHub
-- 🌟 Star the repo if you find it useful!
-
----
-
-**Connect AI to Odoo. Build the future.** 🚀
+**Connect AI to Odoo v9. Two tools. Full power.**
