@@ -4,7 +4,7 @@
 
 An MCP (Model Context Protocol) server for **Odoo v9** ERP systems, enabling AI assistants to interact with Odoo data and functionality via JSON-RPC.
 
-> **For Odoo 14+**, see [mcp-odoo](https://github.com/tuanle96/mcp-odoo).
+> **For Odoo 14-19**, see [mcp-odoo-adv](https://github.com/AlanOgic/mcp-odoo-adv). For **Odoo 19 optimized**, see [mcp-odoo-19](https://github.com/AlanOgic/mcp-odoo-19).
 
 ---
 
@@ -387,7 +387,6 @@ GNU General Public License v3.0 or later (GPL-3.0-or-later) — See [LICENSE](LI
 
 ## Acknowledgments
 
-- Original project by [Le Anh Tuan](https://github.com/tuanle96/mcp-odoo)
 - Built with [FastMCP](https://github.com/jlowin/fastmcp)
 - Follows [Model Context Protocol](https://modelcontextprotocol.io) specification
 

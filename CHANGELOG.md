@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.0] - 2026-03-03
 
-Fork of [mcp-odoo-adv](https://github.com/AlanOgic/mcp-odoo-adv) v1.0.0-beta.2, specialized for Odoo v9.
+Specialized for Odoo v9, based on [mcp-odoo-adv](https://github.com/AlanOgic/mcp-odoo-adv) v1.0.0-beta.2.
 
-### Changed (from mcp-odoo-adv)
+### Changed
 
 - **Removed JSON-2 API**: Odoo v9 uses JSON-RPC only (`/jsonrpc` endpoint)
 - **Updated ir.module.module fields**: `installed_version` -> `version`, removed `application`/`license` fields
@@ -23,7 +23,7 @@ Fork of [mcp-odoo-adv](https://github.com/AlanOgic/mcp-odoo-adv) v1.0.0-beta.2, 
 - **Simplified client**: Removed `api_key`, `api_version` parameters, JSON-2 headers, Bearer token auth
 - **Entry point**: `odoo-mcp` -> `odoo-mcp-v9`
 
-### Kept (from mcp-odoo-adv)
+### Kept
 
 - 2 universal tools: `execute_method`, `batch_execute`
 - 10+ MCP resources for discovery
