@@ -4,12 +4,14 @@ MCP server for Odoo v9 integration
 Provides MCP tools and resources for interacting with Odoo v9 ERP systems via JSON-RPC
 """
 
+from __future__ import annotations
+
 import json
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any, AsyncIterator, Dict, List, Optional, Union, cast
+from typing import Any
 
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
@@ -46,7 +48,16 @@ mcp = FastMCP(
 )
 
 
+# ----- Smart Limits -----
+DEFAULT_LIMIT = 100  # Reasonable default to prevent huge responses
+MAX_LIMIT = 1000  # Hard maximum to cap queries
+SEARCH_METHODS = frozenset({"search", "search_count", "search_read"})
+
+
 # ----- MCP Resources -----
+# Note: Resources use get_odoo_client() (thread-safe singleton) because FastMCP
+# resources don't receive a Context object. Tools use the lifespan context.
+# Both paths return the same singleton instance.
 
 
 @mcp.resource(
@@ -156,11 +167,8 @@ def search_records_resource(model_name: str, domain: str) -> str:
         # Parse domain from JSON string
         domain_list = json.loads(domain)
 
-        # Set a reasonable default limit
-        limit = 10
-
         # Perform search_read for efficiency
-        results = odoo_client.search_read(model_name, domain_list, limit=limit)
+        results = odoo_client.search_read(model_name, domain_list, limit=DEFAULT_LIMIT)
 
         return json.dumps(results, indent=2)
     except Exception as e:
@@ -266,7 +274,11 @@ def get_model_access(model_name: str) -> str:
                     False,  # raise_exception=False
                 )
                 access_rights[operation] = has_access
-            except Exception:
+            except Exception as e:
+                print(
+                    f"Access check for {model_name}.{operation} failed: {e}",
+                    file=sys.stderr,
+                )
                 access_rights[operation] = False
 
         return json.dumps(
@@ -681,54 +693,27 @@ def get_server_info() -> str:
 # ----- Pydantic models for type safety -----
 
 
-class DomainCondition(BaseModel):
-    """A single condition in a search domain"""
-
-    field: str = Field(description="Field name to search")
-    operator: str = Field(
-        description="Operator (e.g., '=', '!=', '>', '<', 'in', 'not in', 'like', 'ilike')"
-    )
-    value: Any = Field(description="Value to compare against")
-
-    def to_tuple(self) -> List:
-        """Convert to Odoo domain condition tuple"""
-        return [self.field, self.operator, self.value]
-
-
-class SearchDomain(BaseModel):
-    """Search domain for Odoo models"""
-
-    conditions: List[DomainCondition] = Field(
-        default_factory=list,
-        description="List of conditions for searching. All conditions are combined with AND operator.",
-    )
-
-    def to_domain_list(self) -> List[List]:
-        """Convert to Odoo domain list format"""
-        return [condition.to_tuple() for condition in self.conditions]
-
-
 class ExecuteMethodResponse(BaseModel):
     """Response model for the execute_method tool."""
 
     success: bool = Field(
         description="Indicates if the method execution was successful"
     )
-    result: Optional[Any] = Field(
+    result: Any | None = Field(
         default=None, description="Result of the method execution"
     )
-    error: Optional[str] = Field(default=None, description="Error message, if any")
+    error: str | None = Field(default=None, description="Error message, if any")
 
 
 class BatchExecuteResponse(BaseModel):
     """Response model for batch_execute tool"""
 
     success: bool = Field(description="Whether all operations succeeded")
-    results: List[Dict[str, Any]] = Field(description="Results for each operation")
+    results: list[dict[str, Any]] = Field(description="Results for each operation")
     total_operations: int = Field(description="Total number of operations attempted")
     successful_operations: int = Field(description="Number of successful operations")
     failed_operations: int = Field(description="Number of failed operations")
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None, description="Overall error message if batch failed"
     )
 
@@ -770,7 +755,7 @@ def execute_method(
     method: str,
     args_json: str = None,
     kwargs_json: str = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Execute ANY method on an Odoo model - UNIVERSAL FALLBACK TOOL
 
@@ -822,7 +807,6 @@ def execute_method(
         - error: Error message (if failure)
 
     Pro Tips:
-    - Use validate_before_execute first to catch errors before execution
     - Check odoo://model/{model}/schema for required fields
     - Check odoo://methods/{model} for available methods
     - For workflows, see odoo://workflows for step-by-step guides
@@ -861,12 +845,8 @@ def execute_method(
                     "error": f"Invalid JSON in kwargs_json: {str(e)}",
                 }
 
-        # Apply smart limits to prevent massive data returns
-        DEFAULT_LIMIT = 100  # Reasonable default to prevent huge responses
-        MAX_LIMIT = 1000  # Hard maximum to cap queries
-
         # Special handling for search methods like search, search_count, search_read
-        search_methods = ["search", "search_count", "search_read"]
+        search_methods = SEARCH_METHODS
         if method in search_methods and args:
             # Search methods usually have domain as the first parameter
             # args: [[domain], limit, offset, ...] or [domain, limit, offset, ...]
@@ -934,14 +914,11 @@ def execute_method(
                         elif isinstance(parsed_domain, list):
                             domain_list = parsed_domain
                     except json.JSONDecodeError:
-                        try:
-                            import ast
-
-                            parsed_domain = ast.literal_eval(domain)
-                            if isinstance(parsed_domain, list):
-                                domain_list = parsed_domain
-                        except:
-                            domain_list = []
+                        print(
+                            f"⚠️ Domain string is not valid JSON, using empty domain: {domain[:200]}",
+                            file=sys.stderr,
+                        )
+                        domain_list = []
 
                 # Validate domain_list
                 if domain_list:
@@ -993,7 +970,7 @@ def execute_method(
             elif kwargs.get("limit", 0) == 0 or kwargs.get("limit") is False:
                 # User explicitly wants unlimited (limit=0 or limit=False) - allow but warn
                 print(
-                    f"⚠️  WARNING: Unlimited query requested! This may return massive datasets.",
+                    "⚠️  WARNING: Unlimited query requested! This may return massive datasets.",
                     file=sys.stderr,
                 )
 
@@ -1021,16 +998,21 @@ def execute_method(
 
 
 @mcp.tool(
-    description="Execute multiple Odoo operations in a batch - Atomic transaction support",
+    description="Execute multiple Odoo operations in a batch - Sequential execution with fail-fast support",
     output_schema=BatchExecuteResponse.model_json_schema(),
 )
 def batch_execute(
-    ctx: Context, operations: List[Dict[str, Any]], atomic: bool = True
+    ctx: Context, operations: list[dict[str, Any]], atomic: bool = True
 ) -> BatchExecuteResponse:
     """
-    Execute multiple operations efficiently in one call
+    Execute multiple operations sequentially in one call
 
-    Supports atomic transactions: if one fails, all rollback (when atomic=True)
+    IMPORTANT: Operations are NOT truly atomic. Each operation executes in its own
+    JSON-RPC call with its own database transaction. Previously successful operations
+    CANNOT be rolled back if a later operation fails.
+
+    When atomic=True (default): stops executing on first failure (fail-fast).
+    When atomic=False: continues executing remaining operations after a failure.
 
     Parameters:
         operations: List of operations, each with:
@@ -1038,10 +1020,10 @@ def batch_execute(
                    - method: str (required)
                    - args: list (optional, direct format) OR args_json: str (JSON string format)
                    - kwargs: dict (optional, direct format) OR kwargs_json: str (JSON string format)
-        atomic: If True, all operations succeed or all fail (rollback on error)
+        atomic: If True, stop on first failure (default). Previously committed operations are NOT rolled back.
 
     Examples:
-        # Create customer and order in one transaction
+        # Create customer then order sequentially
         batch_execute(operations=[
             {
                 "model": "res.partner",
@@ -1101,6 +1083,14 @@ def batch_execute(
                 else:
                     kwargs = {}
 
+                # Apply smart limits for search methods (same as execute_method)
+                if method in SEARCH_METHODS and method != "search_count":
+                    if isinstance(kwargs, dict):
+                        if "limit" not in kwargs:
+                            kwargs["limit"] = DEFAULT_LIMIT
+                        elif kwargs.get("limit", 0) > MAX_LIMIT:
+                            kwargs["limit"] = MAX_LIMIT
+
                 # Execute the operation
                 result = odoo.execute_method(model, method, *args, **kwargs)
 
@@ -1123,7 +1113,7 @@ def batch_execute(
                         total_operations=len(operations),
                         successful_operations=successful,
                         failed_operations=failed,
-                        error=f"Batch failed at operation {idx}: {str(e)} (atomic mode - no operations committed)",
+                        error=f"Batch stopped at operation {idx}: {str(e)} (fail-fast mode — {successful} prior operation(s) were already committed and cannot be rolled back)",
                     )
 
         return BatchExecuteResponse(
@@ -1150,7 +1140,7 @@ def batch_execute(
 
 
 @mcp.prompt(name="search-customers")
-def search_customers_prompt(city: str = "", country: str = "") -> List[Dict[str, str]]:
+def search_customers_prompt(city: str = "", country: str = "") -> list[dict[str, str]]:
     """Search for customers with optional location filters"""
     filter_desc = []
     if city:
@@ -1186,7 +1176,7 @@ Check odoo://model/res.partner/schema for all available fields.
 
 
 @mcp.prompt(name="create-sales-order")
-def create_sales_order_prompt(customer_id: int = 0) -> List[Dict[str, str]]:
+def create_sales_order_prompt(customer_id: int = 0) -> list[dict[str, str]]:
     """Create a sales order in Odoo"""
     return [
         {
@@ -1209,7 +1199,7 @@ See odoo://workflows for complete sales workflow.
 
 
 @mcp.prompt(name="odoo-exploration")
-def odoo_exploration_prompt() -> List[Dict[str, str]]:
+def odoo_exploration_prompt() -> list[dict[str, str]]:
     """Discover capabilities of this Odoo instance"""
     return [
         {

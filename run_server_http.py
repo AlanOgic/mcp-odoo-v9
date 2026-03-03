@@ -80,7 +80,7 @@ print(f"Logging to: {log_file}")
 from odoo_mcp.server import mcp
 
 # Get HTTP configuration from environment
-host = os.environ.get("MCP_HOST", "0.0.0.0")
+host = os.environ.get("MCP_HOST", "127.0.0.1")
 port = int(os.environ.get("MCP_PORT", "8008"))
 path = os.environ.get("MCP_HTTP_PATH", "/mcp")
 

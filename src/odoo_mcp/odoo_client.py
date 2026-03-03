@@ -2,13 +2,17 @@
 Odoo v9 JSON-RPC client for MCP server integration
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
 import sys
+import threading
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
@@ -19,13 +23,13 @@ class OdooClient:
 
     def __init__(
         self,
-        url,
-        db,
-        username,
-        password,
-        timeout=30,
-        verify_ssl=True,
-    ):
+        url: str,
+        db: str,
+        username: str,
+        password: str,
+        timeout: int = 30,
+        verify_ssl: bool = True,
+    ) -> None:
         """
         Initialize the Odoo v9 client with connection parameters
 
@@ -37,9 +41,13 @@ class OdooClient:
             timeout: Connection timeout in seconds
             verify_ssl: Whether to verify SSL certificates
         """
-        # Ensure URL has a protocol
+        # Ensure URL has a protocol — default to HTTPS for security
         if not re.match(r"^https?://", url):
-            url = f"http://{url}"
+            url = f"https://{url}"
+            print(
+                f"No URL scheme provided, defaulting to HTTPS: {url}",
+                file=sys.stderr,
+            )
 
         # Remove trailing slash from URL if present
         url = url.rstrip("/")
@@ -61,10 +69,19 @@ class OdooClient:
         self.session = requests.Session()
         self.session.verify = verify_ssl
 
-        # HTTP proxy support
-        proxy = os.environ.get("HTTP_PROXY")
-        if proxy:
-            self.session.proxies = {"http": proxy, "https": proxy}
+        # HTTP/HTTPS proxy support
+        http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy")
+        https_proxy = (
+            os.environ.get("HTTPS_PROXY")
+            or os.environ.get("https_proxy")
+            or http_proxy
+        )
+        if http_proxy or https_proxy:
+            self.session.proxies = {}
+            if http_proxy:
+                self.session.proxies["http"] = http_proxy
+            if https_proxy:
+                self.session.proxies["https"] = https_proxy
 
         # Parse hostname for logging
         parsed_url = urllib.parse.urlparse(self.url)
@@ -125,7 +142,7 @@ class OdooClient:
         except requests.exceptions.RequestException as e:
             raise ValueError(f"Request failed: {str(e)}")
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Initialize the JSON-RPC connection and authenticate"""
         print(f"Connecting to Odoo v9 at: {self.url}", file=sys.stderr)
         print(f"  Hostname: {self.hostname}", file=sys.stderr)
@@ -156,21 +173,58 @@ class OdooClient:
             print(f"Authentication error: {str(e)}", file=sys.stderr)
             raise ValueError(f"Failed to authenticate with Odoo: {str(e)}")
 
-    def _execute(self, model, method, *args, **kwargs):
-        """Execute a method on an Odoo v9 model via JSON-RPC"""
-        return self._jsonrpc_call(
-            "object",
-            "execute_kw",
-            self.db,
-            self.uid,
-            self.password,
-            model,
-            method,
-            args,
-            kwargs,
-        )
+    _MAX_RETRIES = 3
+    _RETRY_BACKOFF = 1.0  # seconds, doubled each retry
 
-    def execute_method(self, model, method, *args, **kwargs):
+    def _execute(self, model: str, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Execute a method on an Odoo v9 model via JSON-RPC with retry on transient errors."""
+        last_error: Exception | None = None
+
+        for attempt in range(self._MAX_RETRIES):
+            try:
+                return self._jsonrpc_call(
+                    "object",
+                    "execute_kw",
+                    self.db,
+                    self.uid,
+                    self.password,
+                    model,
+                    method,
+                    args,
+                    kwargs,
+                )
+            except (ConnectionError, TimeoutError) as e:
+                last_error = e
+                if attempt < self._MAX_RETRIES - 1:
+                    wait = self._RETRY_BACKOFF * (2**attempt)
+                    print(
+                        f"Transient error (attempt {attempt + 1}/{self._MAX_RETRIES}), "
+                        f"retrying in {wait}s: {e}",
+                        file=sys.stderr,
+                    )
+                    time.sleep(wait)
+            except ValueError as e:
+                # Check if this is a session/auth error — re-authenticate once
+                err_msg = str(e).lower()
+                if attempt == 0 and (
+                    "session" in err_msg
+                    or "access denied" in err_msg
+                    or "uid" in err_msg
+                ):
+                    print(
+                        f"Possible session expiry, re-authenticating: {e}",
+                        file=sys.stderr,
+                    )
+                    try:
+                        self._connect()
+                        continue
+                    except Exception:
+                        pass
+                raise
+
+        raise last_error  # type: ignore[misc]
+
+    def execute_method(self, model: str, method: str, *args: Any, **kwargs: Any) -> Any:
         """
         Execute an arbitrary method on a model
 
@@ -185,7 +239,7 @@ class OdooClient:
         """
         return self._execute(model, method, *args, **kwargs)
 
-    def get_models(self):
+    def get_models(self) -> dict[str, Any]:
         """
         Get a list of all available models in the system
 
@@ -201,19 +255,17 @@ class OdooClient:
             ['res.partner', 'res.users', 'res.company', 'res.groups', 'ir.model']
         """
         try:
-            # First search for model IDs
-            model_ids = self._execute("ir.model", "search", [])
+            # Single RPC call instead of search + read
+            result = self._execute(
+                "ir.model", "search_read", [], {"fields": ["model", "name"]}
+            )
 
-            if not model_ids:
+            if not result:
                 return {
                     "model_names": [],
                     "models_details": {},
                     "error": "No models found",
                 }
-
-            # Then read the model data with only the most basic fields
-            # that are guaranteed to exist in all Odoo versions
-            result = self._execute("ir.model", "read", model_ids, ["model", "name"])
 
             # Extract and sort model names alphabetically
             models = sorted([rec["model"] for rec in result])
@@ -231,7 +283,7 @@ class OdooClient:
             print(f"Error retrieving models: {str(e)}", file=sys.stderr)
             return {"model_names": [], "models_details": {}, "error": str(e)}
 
-    def get_model_info(self, model_name):
+    def get_model_info(self, model_name: str) -> dict[str, Any]:
         """
         Get information about a specific model
 
@@ -263,7 +315,7 @@ class OdooClient:
             print(f"Error retrieving model info: {str(e)}", file=sys.stderr)
             return {"error": str(e)}
 
-    def get_model_fields(self, model_name):
+    def get_model_fields(self, model_name: str) -> dict[str, Any]:
         """
         Get field definitions for a specific model
 
@@ -286,7 +338,7 @@ class OdooClient:
             print(f"Error retrieving fields: {str(e)}", file=sys.stderr)
             return {"error": str(e)}
 
-    def discover_model_buttons(self, model_name: str) -> List[Dict[str, str]]:
+    def discover_model_buttons(self, model_name: str) -> list[dict[str, str]]:
         """
         Discover callable business methods by parsing form view button elements.
 
@@ -314,9 +366,18 @@ class OdooClient:
             seen = set()
             buttons = []
 
+            MAX_VIEW_SIZE = 500_000  # 500KB — more than sufficient for any Odoo view
+
             for view in views:
                 arch = view.get("arch", "")
                 if not arch:
+                    continue
+
+                if len(arch) > MAX_VIEW_SIZE:
+                    print(
+                        f"Skipping oversized view arch ({len(arch)} bytes) for {model_name}",
+                        file=sys.stderr,
+                    )
                     continue
 
                 try:
@@ -346,7 +407,7 @@ class OdooClient:
             print(f"discover_model_buttons({model_name}) failed: {e}", file=sys.stderr)
             return []
 
-    def get_state_field_info(self, model_name: str) -> Optional[Dict[str, Any]]:
+    def get_state_field_info(self, model_name: str) -> dict[str, Any] | None:
         """
         Get state/stage field information for a model.
 
@@ -391,7 +452,7 @@ class OdooClient:
             print(f"get_state_field_info({model_name}) failed: {e}", file=sys.stderr)
             return None
 
-    def discover_workflows(self) -> List[Dict[str, Any]]:
+    def discover_workflows(self) -> list[dict[str, Any]]:
         """
         Discover formal Odoo v9 workflows from the workflow engine.
 
@@ -454,8 +515,11 @@ class OdooClient:
                             }
                             for a in activities
                         ]
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(
+                        f"Failed to fetch activities for workflow {wf_id}: {e}",
+                        file=sys.stderr,
+                    )
 
                 # Get transitions for this workflow
                 try:
@@ -494,8 +558,11 @@ class OdooClient:
                             }
                             for t in transitions
                         ]
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(
+                        f"Failed to fetch transitions for workflow {wf_id}: {e}",
+                        file=sys.stderr,
+                    )
 
                 results.append(wf_entry)
 
@@ -504,7 +571,7 @@ class OdooClient:
             print(f"discover_workflows() failed: {e}", file=sys.stderr)
             return []
 
-    def discover_state_machines(self) -> List[Dict[str, Any]]:
+    def discover_state_machines(self) -> list[dict[str, Any]]:
         """
         Find models that have a state selection field (informal state machines).
 
@@ -576,7 +643,11 @@ class OdooClient:
                                 },
                             }
                         )
-                except Exception:
+                except Exception as e:
+                    print(
+                        f"Failed to get state info for {model_name}: {e}",
+                        file=sys.stderr,
+                    )
                     continue
 
             return results
@@ -585,8 +656,14 @@ class OdooClient:
             return []
 
     def search_read(
-        self, model_name, domain, fields=None, offset=None, limit=None, order=None
-    ):
+        self,
+        model_name: str,
+        domain: list[Any],
+        fields: list[str] | None = None,
+        offset: int | None = None,
+        limit: int | None = None,
+        order: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for records and read their data in a single call
 
@@ -607,24 +684,21 @@ class OdooClient:
             >>> print(len(records))
             5
         """
-        try:
-            kwargs = {}
-            if offset:
-                kwargs["offset"] = offset
-            if fields is not None:
-                kwargs["fields"] = fields
-            if limit is not None:
-                kwargs["limit"] = limit
-            if order is not None:
-                kwargs["order"] = order
+        kwargs: dict[str, Any] = {}
+        if offset is not None:
+            kwargs["offset"] = offset
+        if fields is not None:
+            kwargs["fields"] = fields
+        if limit is not None:
+            kwargs["limit"] = limit
+        if order is not None:
+            kwargs["order"] = order
 
-            result = self._execute(model_name, "search_read", domain, **kwargs)
-            return result
-        except Exception as e:
-            print(f"Error in search_read: {str(e)}", file=sys.stderr)
-            return []
+        return self._execute(model_name, "search_read", domain, **kwargs)
 
-    def read_records(self, model_name, ids, fields=None):
+    def read_records(
+        self, model_name: str, ids: list[int], fields: list[str] | None = None
+    ) -> list[dict[str, Any]]:
         """
         Read data of records by IDs
 
@@ -642,19 +716,14 @@ class OdooClient:
             >>> print(records[0]['name'])
             'YourCompany'
         """
-        try:
-            kwargs = {}
-            if fields is not None:
-                kwargs["fields"] = fields
+        kwargs: dict[str, Any] = {}
+        if fields is not None:
+            kwargs["fields"] = fields
 
-            result = self._execute(model_name, "read", ids, kwargs)
-            return result
-        except Exception as e:
-            print(f"Error reading records: {str(e)}", file=sys.stderr)
-            return []
+        return self._execute(model_name, "read", ids, kwargs)
 
 
-def load_config():
+def load_config() -> dict[str, str]:
     """
     Load Odoo configuration from environment variables, .env file, or config file
 
@@ -734,9 +803,16 @@ def load_config():
     )
 
 
-def get_odoo_client():
+_odoo_client_instance: OdooClient | None = None
+_odoo_client_lock = threading.Lock()
+
+
+def get_odoo_client() -> OdooClient:
     """
-    Get a configured Odoo v9 client instance (JSON-RPC only)
+    Get a configured Odoo v9 client singleton (JSON-RPC only)
+
+    Thread-safe. The client is created and authenticated once on the first call,
+    then reused for all subsequent calls (config is read once, session is reused).
 
     Environment variables:
         ODOO_URL: Odoo server URL
@@ -747,29 +823,46 @@ def get_odoo_client():
     Returns:
         OdooClient: A configured Odoo client instance
     """
-    config = load_config()
+    global _odoo_client_instance
+    if _odoo_client_instance is not None:
+        return _odoo_client_instance
 
-    password = config.get("password") or os.environ.get("ODOO_PASSWORD")
+    with _odoo_client_lock:
+        # Double-check after acquiring lock
+        if _odoo_client_instance is not None:
+            return _odoo_client_instance
 
-    # Get additional options from environment variables
-    timeout = int(os.environ.get("ODOO_TIMEOUT", "30"))
-    verify_ssl = os.environ.get("ODOO_VERIFY_SSL", "1").lower() in ["1", "true", "yes"]
+        config = load_config()
 
-    # Print detailed configuration
-    print("Odoo v9 client configuration:", file=sys.stderr)
-    print(f"  URL: {config['url']}", file=sys.stderr)
-    print(f"  Database: {config['db']}", file=sys.stderr)
-    print(f"  Username: {config['username']}", file=sys.stderr)
-    print(f"  API: JSON-RPC", file=sys.stderr)
-    print(f"  Auth: Password ({'set' if password else 'NOT SET'})", file=sys.stderr)
-    print(f"  Timeout: {timeout}s", file=sys.stderr)
-    print(f"  Verify SSL: {verify_ssl}", file=sys.stderr)
+        password = config.get("password") or os.environ.get("ODOO_PASSWORD")
 
-    return OdooClient(
-        url=config["url"],
-        db=config["db"],
-        username=config["username"],
-        password=password,
-        timeout=timeout,
-        verify_ssl=verify_ssl,
-    )
+        # Get additional options from environment variables
+        timeout = int(os.environ.get("ODOO_TIMEOUT", "30"))
+        verify_ssl = os.environ.get("ODOO_VERIFY_SSL", "1").lower() in [
+            "1",
+            "true",
+            "yes",
+        ]
+
+        # Print configuration once at startup
+        print("Odoo v9 client configuration:", file=sys.stderr)
+        print(f"  URL: {config['url']}", file=sys.stderr)
+        print(f"  Database: {config['db']}", file=sys.stderr)
+        print(f"  Username: {config['username']}", file=sys.stderr)
+        print("  API: JSON-RPC", file=sys.stderr)
+        print(
+            f"  Auth: Password ({'set' if password else 'NOT SET'})",
+            file=sys.stderr,
+        )
+        print(f"  Timeout: {timeout}s", file=sys.stderr)
+        print(f"  Verify SSL: {verify_ssl}", file=sys.stderr)
+
+        _odoo_client_instance = OdooClient(
+            url=config["url"],
+            db=config["db"],
+            username=config["username"],
+            password=password,
+            timeout=timeout,
+            verify_ssl=verify_ssl,
+        )
+        return _odoo_client_instance

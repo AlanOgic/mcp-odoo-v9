@@ -3,7 +3,7 @@ services:
     image: alanogic/mcp-odoo-v9:sse
     env_file: .env
     ports:
-      - "8009:8009"
+      - "127.0.0.1:8009:8009"
     volumes:
       - logs:/app/logs
     restart: unless-stopped
@@ -33,7 +33,7 @@ services:
     image: alanogic/mcp-odoo-v9:http
     env_file: .env
     ports:
-      - "8008:8008"
+      - "127.0.0.1:8008:8008"
     volumes:
       - logs:/app/logs
     restart: unless-stopped

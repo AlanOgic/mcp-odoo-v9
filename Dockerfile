@@ -25,8 +25,12 @@ COPY fastmcp.json /app/
 # Install package in editable mode (fast - no dependencies to install)
 RUN pip install --no-cache-dir -e .
 
-# Create logs directory
-RUN mkdir -p /app/logs && chmod 777 /app/logs
+# Create non-root user and logs directory
+RUN addgroup --system --gid 1001 appgroup && \
+    adduser --system --uid 1001 --ingroup appgroup --no-create-home appuser && \
+    mkdir -p /app/logs && \
+    chown -R appuser:appgroup /app/logs && \
+    chmod 750 /app/logs
 
 # Prefer ".env" file | Set environment variables (can be overridden at runtime)
 # ENV ODOO_URL=""
@@ -42,6 +46,8 @@ RUN chmod +x run_server.py
 
 # Set stdout/stderr to unbuffered mode
 ENV PYTHONUNBUFFERED=1
+
+USER appuser
 
 # Run the custom MCP server script instead of the module
 ENTRYPOINT ["python", "run_server.py"]

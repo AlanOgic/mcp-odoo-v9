@@ -35,6 +35,8 @@ logs/
 
 # Claude Code private files
 .claude/
+# MCP client config (contains credentials)
+.mcp.json
 # Odoo specific
 odoo_config.json
 
